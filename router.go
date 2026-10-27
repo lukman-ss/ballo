@@ -21,6 +21,7 @@ type node struct {
 type routeMatch struct {
 	handler Handler
 	method  string
+	params  map[string]string
 }
 
 func newRouter() *router {
@@ -67,12 +68,7 @@ func (r *router) match(path string) *routeMatch {
 func (r *router) matchNode(n *node, parts []string, idx int, params map[string]string) *routeMatch {
 	if idx == len(parts) {
 		if n.handler != nil {
-			// Deep copy params
-			p := make(map[string]string, len(params))
-			for k, v := range params {
-				p[k] = v
-			}
-			return &routeMatch{handler: n.handler, method: n.methods[0]}
+			return &routeMatch{handler: n.handler, method: n.methods[0], params: params}
 		}
 		return nil
 	}

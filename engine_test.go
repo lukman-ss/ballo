@@ -2,7 +2,6 @@ package ballo
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -153,6 +152,41 @@ func TestEngineMiddleware(t *testing.T) {
 		if order[i] != v {
 			t.Fatalf("step %d: expected %s, got %s", i, v, order[i])
 		}
+	}
+}
+
+func TestEngineMiddlewareShortCircuit(t *testing.T) {
+	e := New()
+	var mwCalled bool
+	var handlerCalled bool
+
+	e.Use(func(next Handler) Handler {
+		return func(req *Request) (*Response, error) {
+			mwCalled = true
+			return Text(http.StatusOK, "mw-response"), nil // short-circuit
+		}
+	})
+
+	e.GET("/short", func(req *Request) (*Response, error) {
+		handlerCalled = true
+		return Text(http.StatusOK, "handler-response"), nil
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/short", nil)
+	e.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if w.Body.String() != "mw-response" {
+		t.Fatalf("expected 'mw-response', got '%s'", w.Body.String())
+	}
+	if !mwCalled {
+		t.Fatal("middleware should have been called")
+	}
+	if handlerCalled {
+		t.Fatal("handler should NOT have been called (short-circuit)")
 	}
 }
 

@@ -57,12 +57,12 @@ func (r *Response) Write(w http.ResponseWriter) {
 
 // Engine is the Ballo web framework core.
 type Engine struct {
-	mu                 sync.RWMutex
-	routes             *[8]*router // indexed by method bit
-	middlewares        []Middleware
-	notFound           Handler
-	methodNotAllowed   Handler
-	panicHandler       func(http.ResponseWriter, *http.Request, interface{})
+	mu               sync.RWMutex
+	routes           *[8]*router // indexed by method bit
+	middlewares      []Middleware
+	notFound         Handler
+	methodNotAllowed Handler
+	panicHandler     func(http.ResponseWriter, *http.Request, interface{})
 }
 
 const (
@@ -100,8 +100,8 @@ func methodBit(method string) int {
 // New creates a new Ballo engine.
 func New() *Engine {
 	e := &Engine{
-		routes:        newRoutes(),
-		panicHandler:  defaultPanicHandler,
+		routes:       newRoutes(),
+		panicHandler: defaultPanicHandler,
 	}
 	return e
 }
@@ -218,7 +218,6 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rts := e.routes
 	nf := e.notFound
 	mna := e.methodNotAllowed
-	ph := e.panicHandler
 	e.mu.RUnlock()
 
 	path := r.URL.Path
@@ -236,25 +235,36 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		match = rts[bit].match(path)
 	}
 
-	// Fallback to other methods
-	if match == nil && bit >= 0 {
+	if match != nil {
+		req := e.toRequest(r, path, match.method, match.params)
+		resp, err := applyMiddlewares(match.handler, e.middlewares, req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if resp != nil {
+			resp.Write(w)
+		}
+		return
+	}
+
+	// No exact method match. Path may exist with another method → 405.
+	if bit >= 0 {
+		var allowed []string
 		for i, rt := range rts {
 			if rt == nil || i == bit {
 				continue
 			}
-			match = rt.match(path)
-			if match != nil {
-				break
+			if m := rt.match(path); m != nil {
+				for mt := range rt.methods {
+					allowed = append(allowed, mt)
+				}
 			}
 		}
-	}
-
-	if match == nil {
-		// Check if any route exists for this path with different method
-		if e.hasPath(rts, path) {
+		if len(allowed) > 0 {
 			if mna != nil {
-				req := e.toRequest(r, path, "")
-				resp, err := mna(req)
+				req := e.toRequest(r, path, "", nil)
+				resp, err := applyMiddlewares(mna, e.middlewares, req)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
@@ -264,36 +274,26 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			w.Header().Set("Allow", "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS")
+			w.Header().Set("Allow", strings.Join(allowed, ", "))
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		if nf != nil {
-			req := e.toRequest(r, path, "")
-			resp, err := applyMiddlewares(nf, e.middlewares, req)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			if resp != nil {
-				resp.Write(w)
-			}
-			return
-		}
-		http.NotFound(w, r)
-		return
 	}
 
-	req := e.toRequest(r, path, match.method)
-	resp, err := applyMiddlewares(match.handler, e.middlewares, req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	// Path not found → 404.
+	if nf != nil {
+		req := e.toRequest(r, path, "", nil)
+		resp, err := applyMiddlewares(nf, e.middlewares, req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if resp != nil {
+			resp.Write(w)
+		}
 		return
 	}
-	if resp != nil {
-		resp.Write(w)
-	}
-	_ = ph // used via panic recovery
+	http.NotFound(w, r)
 }
 
 func applyMiddlewares(handler Handler, mw []Middleware, req *Request) (*Response, error) {
@@ -305,26 +305,20 @@ func applyMiddlewares(handler Handler, mw []Middleware, req *Request) (*Response
 	return h(req)
 }
 
-func (e *Engine) toRequest(r *http.Request, path, method string) *Request {
+func (e *Engine) toRequest(r *http.Request, path, method string, params map[string]string) *Request {
+	if params == nil {
+		params = make(map[string]string)
+	}
 	return &Request{
 		Request: r,
 		Context: r.Context(),
 		rctx: &RouteContext{
 			Method:  method,
 			Path:    path,
-			Params:  make(map[string]string),
+			Params:  params,
 			RawPath: r.URL.RawPath,
 		},
 	}
-}
-
-func (e *Engine) hasPath(rts *[8]*router, path string) bool {
-	for _, rt := range rts {
-		if rt != nil && rt.hasPath(path) {
-			return true
-		}
-	}
-	return false
 }
 
 func defaultPanicHandler(w http.ResponseWriter, r *http.Request, rec interface{}) {
