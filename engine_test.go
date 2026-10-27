@@ -251,3 +251,72 @@ func TestEngineAllMethods(t *testing.T) {
 		}
 	}
 }
+
+func TestEngineGroupMiddleware(t *testing.T) {
+	e := New()
+	var mwCalled bool
+
+	api := e.Group("/api", func(next Handler) Handler {
+		return func(req *Request) (*Response, error) {
+			mwCalled = true
+			return next(req)
+		}
+	})
+
+	api.GET("/test", func(req *Request) (*Response, error) {
+		return Text(http.StatusOK, "ok"), nil
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/test", nil)
+	e.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !mwCalled {
+		t.Fatal("group middleware was not called")
+	}
+}
+
+func TestEngineWildcardRoute(t *testing.T) {
+	e := New()
+	e.GET("/static/*filepath", func(req *Request) (*Response, error) {
+		return Text(http.StatusOK, req.Param("filepath")), nil
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/static/css/style.css", nil)
+	e.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if w.Body.String() != "css/style.css" {
+		t.Fatalf("expected 'css/style.css', got '%s'", w.Body.String())
+	}
+}
+
+func TestEngineConcurrentRequests(t *testing.T) {
+	e := New()
+	e.GET("/users/:id", func(req *Request) (*Response, error) {
+		return Text(http.StatusOK, req.Param("id")), nil
+	})
+
+	done := make(chan bool)
+	for i := 0; i < 50; i++ {
+		go func(id string) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest("GET", "/users/"+id, nil)
+			e.ServeHTTP(w, r)
+			if w.Code != http.StatusOK || w.Body.String() != id {
+				t.Errorf("expected %s, got %s", id, w.Body.String())
+			}
+			done <- true
+		}(string(rune('A' + (i % 26))))
+	}
+
+	for i := 0; i < 50; i++ {
+		<-done
+	}
+}

@@ -122,9 +122,8 @@ func (e *Engine) Use(mw ...Middleware) {
 // Group creates a route group with shared middleware.
 func (e *Engine) Group(prefix string, mw ...Middleware) *Group {
 	g := &Group{
-		prefix:      prefix,
-		middlewares: append([]Middleware{}, e.middlewares...),
-		engine:      e,
+		prefix: prefix,
+		engine: e,
 	}
 	g.middlewares = append(g.middlewares, mw...)
 	return g
@@ -383,6 +382,7 @@ func (r *Request) WithContext(ctx context.Context) *Request {
 }
 
 // Shutdown gracefully shuts down the server.
+// Deprecated: Engine does not manage a server instance. Use context.WithTimeout with http.Server.
 func (e *Engine) Shutdown() {
 	e.mu.Lock()
 	defer e.mu.Unlock()

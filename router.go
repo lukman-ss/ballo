@@ -68,7 +68,11 @@ func (r *router) match(path string) *routeMatch {
 func (r *router) matchNode(n *node, parts []string, idx int, params map[string]string) *routeMatch {
 	if idx == len(parts) {
 		if n.handler != nil {
-			return &routeMatch{handler: n.handler, method: n.methods[0], params: params}
+			p := make(map[string]string, len(params))
+			for k, v := range params {
+				p[k] = v
+			}
+			return &routeMatch{handler: n.handler, method: n.methods[0], params: p}
 		}
 		return nil
 	}
@@ -81,6 +85,16 @@ func (r *router) matchNode(n *node, parts []string, idx int, params map[string]s
 			}
 		}
 		if child.partial {
+			// Catch-all wildcard matches rest of path
+			if strings.HasPrefix(child.path, "*") {
+				rest := strings.Join(parts[idx:], "/")
+				params[child.param] = rest
+				p := make(map[string]string, len(params))
+				for k, v := range params {
+					p[k] = v
+				}
+				return &routeMatch{handler: child.handler, method: child.methods[0], params: p}
+			}
 			if child.param != "" {
 				params[child.param] = part
 			}

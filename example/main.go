@@ -22,10 +22,7 @@ func main() {
 	// API group
 	api := e.Group("/api")
 	api.GET("/users", func(req *ballo.Request) (*ballo.Response, error) {
-		return ballo.JSON(http.StatusOK, []map[string]string{
-			{"id": "1", "name": "Alice"},
-			{"id": "2", "name": "Bob"},
-		}), nil
+		return ballo.JSON(http.StatusOK, []map[string]string{{"id": "1", "name": "Alice"}, {"id": "2", "name": "Bob"}}), nil
 	})
 	api.GET("/users/:id", func(req *ballo.Request) (*ballo.Response, error) {
 		id := req.Param("id")
