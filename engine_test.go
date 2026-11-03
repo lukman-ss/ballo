@@ -341,4 +341,3 @@ func (m *mockRenderer) Render(w io.Writer, name string, data any) error {
 	_, err := io.WriteString(w, name)
 	return err
 }
-
