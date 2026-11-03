@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/lukman-ss/ballo-render"
 )
 
 // Handler receives a Request and returns a Response or error.
@@ -63,6 +65,7 @@ type Engine struct {
 	notFound         Handler
 	methodNotAllowed Handler
 	panicHandler     func(http.ResponseWriter, *http.Request, interface{})
+	renderer         ballorender.Renderer
 }
 
 const (
@@ -200,6 +203,21 @@ func (e *Engine) SetPanicHandler(h func(http.ResponseWriter, *http.Request, inte
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.panicHandler = h
+}
+
+// SetRenderer configures an optional view renderer on the engine.
+func (e *Engine) SetRenderer(r ballorender.Renderer) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.renderer = r
+}
+
+// Render returns the configured renderer, if any.
+func (e *Engine) Render() ballorender.Renderer {
+	e.mu.RLock()
+	r := e.renderer
+	e.mu.RUnlock()
+	return r
 }
 
 // ServeHTTP implements http.Handler.

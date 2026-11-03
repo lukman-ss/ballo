@@ -2,6 +2,7 @@ package ballo
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -320,3 +321,24 @@ func TestEngineConcurrentRequests(t *testing.T) {
 		<-done
 	}
 }
+
+func TestEngineRenderer(t *testing.T) {
+	e := New()
+	if e.Render() != nil {
+		t.Fatal("expected nil initial renderer")
+	}
+
+	mock := &mockRenderer{}
+	e.SetRenderer(mock)
+	if e.Render() != mock {
+		t.Fatal("expected configured renderer")
+	}
+}
+
+type mockRenderer struct{}
+
+func (m *mockRenderer) Render(w io.Writer, name string, data any) error {
+	_, err := io.WriteString(w, name)
+	return err
+}
+
