@@ -17,7 +17,7 @@ func LoggerMiddleware() Middleware {
 			if resp != nil {
 				status = resp.StatusCode
 			}
-			log.Printf("%s %s %d %v", req.Method, req.URL.Path, status, duration)
+			log.Printf("%s %s %d %v", req.Method(), req.Path(), status, duration)
 			return resp, err
 		}
 	}
@@ -49,12 +49,12 @@ func CORSMiddleware(allowedOrigins ...string) Middleware {
 			if resp == nil {
 				resp = &Response{}
 			}
-			if resp.Header == nil {
-				resp.Header = make(http.Header)
+			if resp.Headers == nil {
+				resp.Headers = make(http.Header)
 			}
-			resp.Header.Set("Access-Control-Allow-Origin", origin)
-			resp.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
-			resp.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			resp.Headers.Set("Access-Control-Allow-Origin", origin)
+			resp.Headers.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+			resp.Headers.Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			return resp, err
 		}
 	}

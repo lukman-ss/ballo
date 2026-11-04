@@ -40,8 +40,8 @@ func TestEngineJSON(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	if w.Header().Get("Content-Type") != "application/json" {
-		t.Fatalf("expected application/json, got %s", w.Header().Get("Content-Type"))
+	if !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("expected application/json*, got %s", w.Header().Get("Content-Type"))
 	}
 
 	var data map[string]string

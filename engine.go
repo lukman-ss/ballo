@@ -1,61 +1,25 @@
 package ballo
 
 import (
-	"context"
-	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 
-	"github.com/lukman-ss/ballo-render"
+	bh "github.com/lukman-ss/ballo-http"
+	ballorender "github.com/lukman-ss/ballo-render"
 )
 
-// Handler receives a Request and returns a Response or error.
-type Handler func(*Request) (*Response, error)
+// Handler is an alias to ballo-http Handler.
+type Handler = bh.Handler
 
-// Middleware wraps a Handler. Return nil to short-circuit (Response written directly).
-type Middleware func(Handler) Handler
+// Middleware is an alias to ballo-http Middleware.
+type Middleware = bh.Middleware
 
-// Request wraps http.Request with Ballo extensions.
-type Request struct {
-	*http.Request
-	Context context.Context
-	rctx    *RouteContext
-}
+// Request is an alias to ballo-http Request.
+type Request = bh.Request
 
-// RouteContext holds matched route info.
-type RouteContext struct {
-	Method  string
-	Path    string
-	Params  map[string]string
-	RawPath string
-}
-
-// Response is the Ballo response type.
-type Response struct {
-	StatusCode int
-	Header     http.Header
-	Body       []byte
-	committed  bool
-}
-
-// Write sends the response to the writer.
-func (r *Response) Write(w http.ResponseWriter) {
-	if r.committed {
-		return
-	}
-	if r.StatusCode == 0 {
-		r.StatusCode = http.StatusOK
-	}
-	for k, vv := range r.Header {
-		w.Header()[k] = vv
-	}
-	w.WriteHeader(r.StatusCode)
-	if r.Body != nil {
-		w.Write(r.Body)
-	}
-	r.committed = true
-}
+// Response is an alias to ballo-http Response.
+type Response = bh.Response
 
 // Engine is the Ballo web framework core.
 type Engine struct {
@@ -253,7 +217,8 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if match != nil {
-		req := e.toRequest(r, path, match.method, match.params)
+		req := bh.NewRequest(r)
+		req = bh.WithParams(req, match.params)
 		resp, err := applyMiddlewares(match.handler, e.middlewares, req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -280,7 +245,8 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(allowed) > 0 {
 			if mna != nil {
-				req := e.toRequest(r, path, "", nil)
+				req := bh.NewRequest(r)
+				req = bh.WithParams(req, nil)
 				resp, err := applyMiddlewares(mna, e.middlewares, req)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -299,7 +265,8 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Path not found → 404.
 	if nf != nil {
-		req := e.toRequest(r, path, "", nil)
+		req := bh.NewRequest(r)
+		req = bh.WithParams(req, nil)
 		resp, err := applyMiddlewares(nf, e.middlewares, req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -322,81 +289,27 @@ func applyMiddlewares(handler Handler, mw []Middleware, req *Request) (*Response
 	return h(req)
 }
 
-func (e *Engine) toRequest(r *http.Request, path, method string, params map[string]string) *Request {
-	if params == nil {
-		params = make(map[string]string)
-	}
-	return &Request{
-		Request: r,
-		Context: r.Context(),
-		rctx: &RouteContext{
-			Method:  method,
-			Path:    path,
-			Params:  params,
-			RawPath: r.URL.RawPath,
-		},
-	}
-}
-
 func defaultPanicHandler(w http.ResponseWriter, r *http.Request, rec interface{}) {
 	// Don't leak stack traces to client
 	http.Error(w, "internal server error", http.StatusInternalServerError)
 }
 
-// Params returns route parameters from context.
-func (r *Request) Params() map[string]string {
-	if r.rctx == nil {
-		return nil
-	}
-	return r.rctx.Params
-}
-
-// Param returns a single route parameter.
-func (r *Request) Param(key string) string {
-	if r.rctx == nil {
-		return ""
-	}
-	return r.rctx.Params[key]
-}
-
 // JSON helper for handlers.
 func JSON(status int, data interface{}) *Response {
-	body, err := jsonMarshal(data)
-	if err != nil {
-		body = []byte(fmt.Sprintf(`{"error":"%s"}`, err.Error()))
-		status = http.StatusInternalServerError
-	}
-	return &Response{
-		StatusCode: status,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       body,
-	}
+	r, _ := bh.JSON(status, data)
+	return r
 }
 
 // Text helper for handlers.
 func Text(status int, text string) *Response {
-	return &Response{
-		StatusCode: status,
-		Header:     http.Header{"Content-Type": []string{"text/plain"}},
-		Body:       []byte(text),
-	}
+	r, _ := bh.Text(status, text)
+	return r
 }
 
 // HTML helper for handlers.
 func HTML(status int, html string) *Response {
-	return &Response{
-		StatusCode: status,
-		Header:     http.Header{"Content-Type": []string{"text/html"}},
-		Body:       []byte(html),
-	}
-}
-
-// WithContext returns a new Request with the given context.
-func (r *Request) WithContext(ctx context.Context) *Request {
-	r2 := *r
-	r2.Request = r.Request.WithContext(ctx)
-	r2.Context = ctx
-	return &r2
+	r, _ := bh.HTML(status, html)
+	return r
 }
 
 // Shutdown gracefully shuts down the server.
