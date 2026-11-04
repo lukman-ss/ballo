@@ -10,7 +10,7 @@ Ballo is a minimal, idiomatic Go web framework built on the standard library. It
 - 404 / 405 handling with customizable handlers
 - Panic recovery middleware
 - JSON, Text, and HTML response helpers
-- Thread-safe route registration (use before serving)
+- Thread-safe route registration (synchronized via internal RWMutex)
 
 ## Requirements
 
@@ -123,7 +123,7 @@ defer cancel()
 srv.Shutdown(ctx)
 ```
 
-Route and middleware registration should happen at startup, before `ListenAndServe`, since the engine is not guarded against concurrent registration during serving.
+Route and middleware registration is thread-safe and guarded by an internal `sync.RWMutex`. In idiomatic Go, registering all routes and middleware at startup before `ListenAndServe` is recommended to avoid lock contention during request serving.
 
 ## Running Tests
 
@@ -141,6 +141,6 @@ go run ./example
 
 ## Limitations
 
-- Routes must be registered before serving begins. There is no hot-swapping during runtime.
+- Registering routes at startup is recommended over dynamic runtime mutations to maintain predictable routing behavior.
 - No built-in session, authentication, or ORM functionality.
 - `Shutdown()` on the Engine clears routes (a test utility); use `http.Server.Shutdown(ctx)` for graceful server shutdown.

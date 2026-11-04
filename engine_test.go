@@ -2,11 +2,14 @@ package ballo
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestEngineBasicRouting(t *testing.T) {
@@ -359,4 +362,82 @@ type mockRenderer struct{}
 func (m *mockRenderer) Render(w io.Writer, name string, data any) error {
 	_, err := io.WriteString(w, name)
 	return err
+}
+
+func TestEngineJSONMarshalError(t *testing.T) {
+	e := New()
+	type circular struct {
+		Ref *circular
+	}
+	c := &circular{}
+	c.Ref = c
+	e.GET("/badjson", func(req *Request) (*Response, error) {
+		return JSON(http.StatusOK, c), nil
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/badjson", nil)
+	e.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestEngineNilResponseHandling(t *testing.T) {
+	e := New()
+	e.GET("/nil", func(req *Request) (*Response, error) {
+		return nil, nil
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/nil", nil)
+	e.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestEngineConcurrentRegisterAndServe(t *testing.T) {
+	e := New()
+	e.GET("/safe", func(req *Request) (*Response, error) {
+		return Text(http.StatusOK, "ok"), nil
+	})
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest("GET", "/safe", nil)
+			e.ServeHTTP(w, r)
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		idx := i
+		go func() {
+			defer wg.Done()
+			path := fmt.Sprintf("/r%d", idx)
+			e.GET(path, func(req *Request) (*Response, error) {
+				return Text(http.StatusOK, "x"), nil
+			})
+		}()
+		time.Sleep(time.Millisecond)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	close(stop)
+	wg.Wait()
 }

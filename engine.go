@@ -195,12 +195,6 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	e.mu.RLock()
-	rts := e.routes
-	nf := e.notFound
-	mna := e.methodNotAllowed
-	e.mu.RUnlock()
-
 	path := r.URL.Path
 	// Strip trailing slash for matching (but preserve root)
 	if len(path) > 1 && path[len(path)-1] == '/' {
@@ -210,29 +204,25 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	method := strings.ToUpper(r.Method)
 	bit := methodBit(method)
 
+	// Snapshot engine state and perform all route matching under the read
+	// lock so concurrent registration (which takes the write lock) cannot
+	// mutate the router trees mid-match. Handler execution happens after the
+	// lock is released.
+	e.mu.RLock()
+	rts := e.routes
+	nf := e.notFound
+	mna := e.methodNotAllowed
+	mws := e.middlewares
+
 	// Try exact method match first
 	var match *routeMatch
 	if bit >= 0 && rts[bit] != nil {
 		match = rts[bit].match(path)
 	}
 
-	if match != nil {
-		req := bh.NewRequest(r)
-		req = bh.WithParams(req, match.params)
-		resp, err := applyMiddlewares(match.handler, e.middlewares, req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if resp != nil {
-			resp.Write(w)
-		}
-		return
-	}
-
 	// No exact method match. Path may exist with another method → 405.
-	if bit >= 0 {
-		var allowed []string
+	var allowed []string
+	if match == nil && bit >= 0 {
 		for i, rt := range rts {
 			if rt == nil || i == bit {
 				continue
@@ -243,38 +233,57 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if len(allowed) > 0 {
-			if mna != nil {
-				req := bh.NewRequest(r)
-				req = bh.WithParams(req, nil)
-				resp, err := applyMiddlewares(mna, e.middlewares, req)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				if resp != nil {
-					resp.Write(w)
-				}
-				return
-			}
-			w.Header().Set("Allow", strings.Join(allowed, ", "))
-			w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+	e.mu.RUnlock()
+
+	if match != nil {
+		req := bh.NewRequest(r)
+		req = bh.WithParams(req, match.params)
+		resp, err := applyMiddlewares(match.handler, mws, req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if resp == nil {
+			resp, _ = bh.Error(http.StatusInternalServerError, "internal server error")
+		}
+		resp.Write(w)
+		return
+	}
+
+	if len(allowed) > 0 {
+		if mna != nil {
+			req := bh.NewRequest(r)
+			req = bh.WithParams(req, nil)
+			resp, err := applyMiddlewares(mna, mws, req)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if resp == nil {
+				resp, _ = bh.Error(http.StatusMethodNotAllowed, "method not allowed")
+			}
+			resp.Write(w)
+			return
+		}
+		w.Header().Set("Allow", strings.Join(allowed, ", "))
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
 
 	// Path not found → 404.
 	if nf != nil {
 		req := bh.NewRequest(r)
 		req = bh.WithParams(req, nil)
-		resp, err := applyMiddlewares(nf, e.middlewares, req)
+		resp, err := applyMiddlewares(nf, mws, req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if resp != nil {
-			resp.Write(w)
+		if resp == nil {
+			resp, _ = bh.Error(http.StatusNotFound, "not found")
 		}
+		resp.Write(w)
 		return
 	}
 	http.NotFound(w, r)
@@ -295,20 +304,31 @@ func defaultPanicHandler(w http.ResponseWriter, r *http.Request, rec interface{}
 }
 
 // JSON helper for handlers.
+// On marshal failure returns a 500 error response to avoid silently producing nil.
 func JSON(status int, data interface{}) *Response {
-	r, _ := bh.JSON(status, data)
+	r, err := bh.JSON(status, data)
+	if err != nil {
+		r, _ = bh.Error(http.StatusInternalServerError, "internal server error")
+		return r
+	}
 	return r
 }
 
 // Text helper for handlers.
 func Text(status int, text string) *Response {
 	r, _ := bh.Text(status, text)
+	if r == nil {
+		r, _ = bh.Error(http.StatusInternalServerError, "internal server error")
+	}
 	return r
 }
 
 // HTML helper for handlers.
 func HTML(status int, html string) *Response {
 	r, _ := bh.HTML(status, html)
+	if r == nil {
+		r, _ = bh.Error(http.StatusInternalServerError, "internal server error")
+	}
 	return r
 }
 
