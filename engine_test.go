@@ -225,6 +225,25 @@ func TestEnginePanicRecovery(t *testing.T) {
 	}
 }
 
+func TestRecoveryMiddlewarePanic(t *testing.T) {
+	e := New()
+	e.Use(RecoveryMiddleware())
+	e.GET("/panic-mw", func(req *Request) (*Response, error) {
+		panic("middleware panic")
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/panic-mw", nil)
+	e.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 from RecoveryMiddleware, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "internal server error") {
+		t.Fatalf("expected error body, got %s", w.Body.String())
+	}
+}
+
 func TestEngineAllMethods(t *testing.T) {
 	e := New()
 	e.POST("/items", func(req *Request) (*Response, error) { return Text(201, "created"), nil })

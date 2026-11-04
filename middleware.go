@@ -6,6 +6,22 @@ import (
 	"time"
 )
 
+// RecoveryMiddleware recovers from panics and returns 500.
+func RecoveryMiddleware() Middleware {
+	return func(next Handler) Handler {
+		return func(req *Request) (resp *Response, err error) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					log.Printf("panic recovered: %v", rec)
+					resp = Text(http.StatusInternalServerError, "internal server error")
+					err = nil
+				}
+			}()
+			return next(req)
+		}
+	}
+}
+
 // LoggerMiddleware logs request method, path, status, and duration.
 func LoggerMiddleware() Middleware {
 	return func(next Handler) Handler {
@@ -19,20 +35,6 @@ func LoggerMiddleware() Middleware {
 			}
 			log.Printf("%s %s %d %v", req.Method(), req.Path(), status, duration)
 			return resp, err
-		}
-	}
-}
-
-// RecoveryMiddleware recovers from panics and returns 500.
-func RecoveryMiddleware() Middleware {
-	return func(next Handler) Handler {
-		return func(req *Request) (*Response, error) {
-			defer func() {
-				if rec := recover(); rec != nil {
-					log.Printf("panic recovered: %v", rec)
-				}
-			}()
-			return next(req)
 		}
 	}
 }
