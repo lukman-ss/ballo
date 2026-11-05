@@ -1,6 +1,6 @@
 # Ballo
 
-Ballo is a minimal, idiomatic Go web framework built on the standard library. It provides tree-based routing, route parameters, middleware chaining with short-circuit support, route groups, panic recovery, and structured JSON/Text/HTML responses.
+Ballo is a minimal, idiomatic Go web framework built on the standard library. It provides tree-based routing, route parameters, middleware chaining with short-circuit support, route groups, panic recovery, structured JSON/Text/HTML responses, an application lifecycle with service providers, and a service container for dependency injection.
 
 ## Features
 
@@ -12,6 +12,9 @@ Ballo is a minimal, idiomatic Go web framework built on the standard library. It
 - JSON, Text, and HTML response helpers
 - Thread-safe route registration (synchronized via internal RWMutex)
 - Internal errors logged server-side; clients receive safe generic 500 response
+- **Application lifecycle** — `NewApp → Register → Boot → Serve → Shutdown`
+- **Service container** — `Bind`, `Instance`, `Make`, `Has`
+- **Service provider hook** — consistent registration pattern for ballo-auth, ballo-session, ballo-render, ballo-migrate, and other packages
 
 ## Requirements
 
@@ -23,7 +26,7 @@ Ballo is a minimal, idiomatic Go web framework built on the standard library. It
 go get github.com/lukman-ss/ballo
 ```
 
-## Quick Start
+## Quick Start (Engine only)
 
 ```go
 package main
@@ -45,24 +48,97 @@ func main() {
 		}), nil
 	})
 
-	e.GET("/health", func(req *ballo.Request) (*ballo.Response, error) {
-		return ballo.Text(http.StatusOK, "ok"), nil
-	})
-
-	// Custom error handlers
-	e.NotFound(func(req *ballo.Request) (*ballo.Response, error) {
-		return ballo.JSON(http.StatusNotFound, map[string]string{"error": "not found"}), nil
-	})
-	e.MethodNotAllowed(func(req *ballo.Request) (*ballo.Response, error) {
-		return ballo.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"}), nil
-	})
-
 	log.Println("server starting on :8080")
 	if err := http.ListenAndServe(":8080", e); err != nil {
 		log.Fatal(err)
 	}
 }
 ```
+
+## Application Lifecycle
+
+`App` wraps the `Engine` and `Container`, and manages a registered list of `ServiceProvider`s.
+
+```go
+app := ballo.NewApp()
+
+// Register providers — their Register() is called immediately in order.
+app.Register(myAuthProvider)
+app.Register(mySessionProvider)
+
+// Boot all providers — calls Boot() on each in registration order.
+// Serve() calls Boot() automatically if not already booted.
+app.Boot()
+
+// Add routes (can be done inside a provider's Boot method).
+app.GET("/health", func(req *ballo.Request) (*ballo.Response, error) {
+    return ballo.JSON(http.StatusOK, map[string]string{"status": "ok"}), nil
+})
+
+// Serve blocks until Shutdown or error.
+go func() {
+    if err := app.Serve(":8080"); err != nil {
+        log.Fatal(err)
+    }
+}()
+
+// Graceful shutdown.
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+app.Shutdown(ctx)
+```
+
+## Service Container
+
+```go
+// Factory binding — resolved fresh on each Make call.
+app.Container.Bind("mailer", func(c *ballo.Container) (any, error) {
+    cfg, _ := c.Make("config")
+    return NewMailer(cfg.(*Config)), nil
+})
+
+// Singleton — registered value returned directly.
+app.Container.Instance("config", &Config{DSN: "postgres://..."})
+
+// Resolve.
+v, err := app.Container.Make("mailer")
+mailer := v.(*Mailer)
+
+// Convenience; panics if key is missing.
+mailer := app.Container.MustMake("mailer").(*Mailer)
+
+// Check existence.
+app.Container.Has("mailer") // true
+```
+
+## Service Providers
+
+Implement `ballo.ServiceProvider` to integrate a package consistently:
+
+```go
+type AuthProvider struct{}
+
+func (p *AuthProvider) Register(app *ballo.App) {
+    // Bind services into the container. Do not resolve other services here.
+    app.Container.Bind("auth", func(c *ballo.Container) (any, error) {
+        return NewAuthService(), nil
+    })
+}
+
+func (p *AuthProvider) Boot(app *ballo.App) {
+    // All providers have been registered. Safe to resolve dependencies and register routes.
+    app.GET("/login", loginHandler)
+    app.GET("/logout", logoutHandler)
+}
+```
+
+Register the provider before `Boot`:
+
+```go
+app.Register(&AuthProvider{})
+```
+
+Packages such as `ballo-auth`, `ballo-session`, `ballo-render`, and `ballo-migrate` can ship a `ServiceProvider` and be mounted with a single `app.Register(...)` call.
 
 ## Groups
 
@@ -107,25 +183,6 @@ e.GET("/page", func(req *ballo.Request) (*ballo.Response, error) {
 
 Route parameters are accessed via `req.Param("name")` or `req.Params()`.
 
-## Lifecycle
-
-Ballo's `Engine` implements `http.Handler`. Run it with the standard library:
-
-```go
-srv := &http.Server{
-	Addr:    ":8080",
-	Handler: e,
-}
-go srv.ListenAndServe()
-
-// Graceful shutdown
-ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-defer cancel()
-srv.Shutdown(ctx)
-```
-
-Route and middleware registration is thread-safe and guarded by an internal `sync.RWMutex`. In idiomatic Go, registering all routes and middleware at startup before `ListenAndServe` is recommended to avoid lock contention during request serving.
-
 ## Running Tests
 
 ```bash
@@ -142,6 +199,6 @@ go run ./example
 
 ## Limitations
 
-- Registering routes at startup is recommended over dynamic runtime mutations to maintain predictable routing behavior.
-- No built-in session, authentication, or ORM functionality.
-- `Shutdown()` on the Engine clears routes (a test utility); use `http.Server.Shutdown(ctx)` for graceful server shutdown.
+- Registering routes at startup (or inside `Boot`) is recommended over dynamic runtime mutations.
+- No built-in session, authentication, or ORM functionality — use service providers.
+- `Shutdown()` on the `Engine` clears routes (a test utility); use `App.Shutdown(ctx)` or `http.Server.Shutdown(ctx)` for graceful server shutdown.
