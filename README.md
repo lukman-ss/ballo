@@ -11,6 +11,7 @@ Ballo is a minimal, idiomatic Go web framework built on the standard library. It
 - Panic recovery middleware
 - JSON, Text, and HTML response helpers
 - Thread-safe route registration (synchronized via internal RWMutex)
+- Internal errors logged server-side; clients receive safe generic 500 response
 
 ## Requirements
 

@@ -399,6 +399,86 @@ func TestEngineNilResponseHandling(t *testing.T) {
 	}
 }
 
+func TestEngineErrorDoesNotLeakDetails(t *testing.T) {
+	tests := []struct {
+		name   string
+		setup  func(*Engine)
+		path   string
+		method string
+	}{
+		{
+			name: "handler error",
+			setup: func(e *Engine) {
+				e.GET("/error", func(req *Request) (*Response, error) {
+					return nil, fmt.Errorf("internal database connection failed")
+				})
+			},
+			path:   "/error",
+			method: "GET",
+		},
+		{
+			name: "404 handler error",
+			setup: func(e *Engine) {
+				e.NotFound(func(req *Request) (*Response, error) {
+					return nil, fmt.Errorf("custom 404 internal error")
+				})
+			},
+			path:   "/nonexistent",
+			method: "GET",
+		},
+		{
+			name: "405 handler error",
+			setup: func(e *Engine) {
+				e.GET("/resource", func(req *Request) (*Response, error) {
+					return Text(http.StatusOK, "ok"), nil
+				})
+				e.MethodNotAllowed(func(req *Request) (*Response, error) {
+					return nil, fmt.Errorf("method not allowed internal error")
+				})
+			},
+			path:   "/resource",
+			method: "POST",
+		},
+		{
+			name: "middleware error",
+			setup: func(e *Engine) {
+				e.Use(func(next Handler) Handler {
+					return func(req *Request) (*Response, error) {
+						return nil, fmt.Errorf("middleware internal error")
+					}
+				})
+				e.GET("/mw-error", func(req *Request) (*Response, error) {
+					return Text(http.StatusOK, "ok"), nil
+				})
+			},
+			path:   "/mw-error",
+			method: "GET",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := New()
+			tt.setup(e)
+
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(tt.method, tt.path, nil)
+			e.ServeHTTP(w, r)
+
+			if w.Code != http.StatusInternalServerError {
+				t.Errorf("expected status 500, got %d", w.Code)
+			}
+			body := w.Body.String()
+			if strings.Contains(body, "database connection") || strings.Contains(body, "internal error") {
+				t.Errorf("response body leaked internal error details: %s", body)
+			}
+			if !strings.Contains(body, "internal server error") {
+				t.Errorf("expected generic error message, got: %s", body)
+			}
+		})
+	}
+}
+
 func TestEngineConcurrentRegisterAndServe(t *testing.T) {
 	e := New()
 	e.GET("/safe", func(req *Request) (*Response, error) {

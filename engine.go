@@ -1,6 +1,7 @@
 package ballo
 
 import (
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -241,7 +242,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req = bh.WithParams(req, match.params)
 		resp, err := applyMiddlewares(match.handler, mws, req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, err)
 			return
 		}
 		if resp == nil {
@@ -257,7 +258,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			req = bh.WithParams(req, nil)
 			resp, err := applyMiddlewares(mna, mws, req)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				writeInternalError(w, err)
 				return
 			}
 			if resp == nil {
@@ -277,7 +278,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req = bh.WithParams(req, nil)
 		resp, err := applyMiddlewares(nf, mws, req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, err)
 			return
 		}
 		if resp == nil {
@@ -342,4 +343,11 @@ func (e *Engine) Shutdown() {
 		e.routes[i] = newRouter()
 	}
 	e.middlewares = nil
+}
+
+// writeInternalError logs the internal error detail and writes a safe 500 response.
+func writeInternalError(w http.ResponseWriter, err error) {
+	log.Printf("internal server error: %v", err)
+	resp, _ := bh.Error(http.StatusInternalServerError, "internal server error")
+	resp.Write(w)
 }
